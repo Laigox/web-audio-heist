@@ -1,3 +1,15 @@
+/* ==========================================================
+   Server: server.js
+   - Express static server + Socket.io API
+   - Responsibilities:
+     * Run yt-dlp/ffmpeg subprocesses
+     * Queue and manage downloads
+     * Provide search, media and playlist metadata via sockets
+     * Emit progress/done/error events to clients
+   - Sections marked below: imports, config, helpers, yt-dlp runners,
+     download pipeline, socket handlers, server start
+ ========================================================== */
+
 const express = require('express');
 const http = require('http');
 const https = require('https');
@@ -297,6 +309,61 @@ function emitProgressFromStdout(text, url, socket) {
   }
 }
 
+async function inspectAudioCodec(filePath) {
+  return new Promise((resolve) => {
+    try {
+      const ff = spawn('ffmpeg', ['-i', filePath]);
+      let stderr = '';
+      ff.stderr.on('data', (d) => { stderr += d.toString(); });
+      ff.on('close', () => {
+        const match = stderr.match(/Audio:\s*([^,\s]+)/i);
+        resolve(match ? String(match[1]).toLowerCase() : null);
+      });
+      ff.on('error', () => resolve(null));
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+function reencodeAudioToAac(baseName, primaryExt, socket, url) {
+  return new Promise((resolve, reject) => {
+    const origPath = path.join(DOWNLOAD_DIR, `${baseName}.${primaryExt}`);
+    const tmpName = `${baseName}.reencoded.${primaryExt}`;
+    const tmpPath = path.join(DOWNLOAD_DIR, tmpName);
+
+    const args = ['-i', origPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', tmpPath, '-y'];
+    const ff = spawn('ffmpeg', args);
+
+    ff.stderr.on('data', (data) => {
+      try {
+        emitProgressFromStdout(data.toString(), url, socket);
+      } catch (e) {}
+    });
+
+    ff.on('error', (err) => {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      reject(err);
+    });
+
+    ff.on('close', (code) => {
+      if (code !== 0) {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+        return reject(new Error('ffmpeg exited with code ' + code));
+      }
+
+      try {
+        if (fs.existsSync(origPath)) fs.unlinkSync(origPath);
+        fs.renameSync(tmpPath, origPath);
+        resolve(`${baseName}.${primaryExt}`);
+      } catch (e) {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+        reject(e);
+      }
+    });
+  });
+}
+
 function executeYtDlpDownload(queueItem, socket) {
   const {
     url,
@@ -329,6 +396,15 @@ function executeYtDlpDownload(queueItem, socket) {
 
     yt.stderr.on('data', (data) => {
       emitProgressFromStdout(data.toString(), url, socket);
+    });
+
+    yt.on('error', (error) => {
+      activeDownloads.delete(url);
+      socket.emit('error', {
+        url,
+        message: error?.message || 'No se pudo iniciar yt-dlp. Verifica que yt-dlp esté instalado y accesible.'
+      });
+      resolve();
     });
 
     yt.on('close', async (code) => {
@@ -364,6 +440,26 @@ function executeYtDlpDownload(queueItem, socket) {
         socket.emit('done', { url, fileName: `${baseName}.${primaryExt}`, extraFileName: null });
         resolve();
         return;
+      }
+
+      // Si el modo es video, comprobar el códec de audio y re-encodear si es Opus
+      try {
+        if (mode === 'video') {
+          const outPath = path.join(DOWNLOAD_DIR, `${baseName}.${primaryExt}`);
+          if (fs.existsSync(outPath)) {
+            const codec = await inspectAudioCodec(outPath);
+            if (codec === 'opus') {
+              socket.emit('progress', { url, percent: 95 });
+              try {
+                await reencodeAudioToAac(baseName, primaryExt, socket, url);
+              } catch (e) {
+                socket.emit('error', { url, message: `Fallo en la conversión automática: ${e.message || e}` });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // no bloquear la finalización si la inspección/conversión falla
       }
 
       socket.emit('done', {
@@ -424,18 +520,20 @@ io.on('connection', (socket) => {
   socket.on('search-youtube', async (data) => {
     const { query, count = 5 } = data;
 
-    const result = await runYtDlp([
-      `ytsearch${count}:${query}`,
-      '--dump-single-json',
-      '--flat-playlist'
-    ]);
-
-    if (result.code !== 0) {
-      socket.emit('search-error', { message: 'No se pudo realizar la búsqueda.' });
-      return;
-    }
-
     try {
+      const result = await runYtDlp([
+        `ytsearch${count}:${query}`,
+        '--dump-single-json',
+        '--no-warnings',
+        '--no-color',
+        '--flat-playlist'
+      ]);
+
+      if (result.code !== 0) {
+        socket.emit('search-error', { message: 'No se pudo realizar la búsqueda.' });
+        return;
+      }
+
       const json = JSON.parse(result.stdout);
       const results = (json.entries || []).map((entry) => ({
         url: `https://www.youtube.com/watch?v=${entry.id}`,
@@ -445,23 +543,25 @@ io.on('connection', (socket) => {
       }));
       socket.emit('search-results', results);
     } catch (error) {
-      socket.emit('search-error', { message: 'Error al procesar los resultados.' });
+      socket.emit('search-error', { message: error?.message || 'No se pudo realizar la búsqueda.' });
     }
   });
 
   socket.on('get-playlist-info', async (url) => {
-    const result = await runYtDlp([
-      '--dump-single-json',
-      '--flat-playlist',
-      url
-    ]);
-
-    if (result.code !== 0) {
-      socket.emit('error', { url, message: 'No se pudo obtener la información de la playlist.' });
-      return;
-    }
-
     try {
+      const result = await runYtDlp([
+        '--dump-single-json',
+        '--no-warnings',
+        '--no-color',
+        '--flat-playlist',
+        url
+      ]);
+
+      if (result.code !== 0) {
+        socket.emit('error', { url, message: 'No se pudo obtener la información de la playlist.' });
+        return;
+      }
+
       const json = JSON.parse(result.stdout);
       const items = (json.entries || []).map((entry) => ({
         url: entry.url?.startsWith('http') ? entry.url : `https://www.youtube.com/watch?v=${entry.id}`,
@@ -476,31 +576,32 @@ io.on('connection', (socket) => {
         id: json.id
       });
     } catch (error) {
-      socket.emit('error', { url, message: 'Error al procesar la playlist.' });
+      socket.emit('error', { url, message: error?.message || 'Error al procesar la playlist.' });
     }
   });
 
   socket.on('get-media-info', async ({ url }) => {
-    const result = await runYtDlp([
-      '--dump-single-json',
-      '--no-playlist',
-      '--no-warnings',
-      url
-    ]);
-
-    if (result.code !== 0) {
-      socket.emit('media-info-error', { url, message: 'No se pudo obtener la información del video.' });
-      return;
-    }
-
     try {
+      const result = await runYtDlp([
+        '--dump-single-json',
+        '--no-playlist',
+        '--no-warnings',
+        '--no-color',
+        url
+      ]);
+
+      if (result.code !== 0) {
+        socket.emit('media-info-error', { url, message: 'No se pudo obtener la información del video.' });
+        return;
+      }
+
       const json = JSON.parse(result.stdout);
       socket.emit('media-info', {
         url,
         info: extractMediaInfo(json)
       });
     } catch (error) {
-      socket.emit('media-info-error', { url, message: 'No se pudo interpretar la metadata del video.' });
+      socket.emit('media-info-error', { url, message: error?.message || 'No se pudo interpretar la metadata del video.' });
     }
   });
 

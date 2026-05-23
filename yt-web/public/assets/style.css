@@ -16,6 +16,17 @@
   --shadow: 0 22px 60px rgba(0, 0, 0, 0.32);
 }
 
+/* ==========================================================
+   Style Sections / Components
+   - Variables: root CSS variables
+   - Global: base element styles
+   - Header: branding and title
+   - Panel: main container and controls
+   - Items: list cards and thumbnails
+   - Buttons: primary/secondary/button styles
+   - Modals: command/options/preview
+ ========================================================== */
+
 * {
   margin: 0;
   padding: 0;

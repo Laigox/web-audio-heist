@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>YT Audio Heist</title>
+<title>YT Heist</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="assets/style.css">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,14 +13,15 @@
 <body data-mode="audio">
 
 <div class="wrapper">
+  <!-- Header component: branding + title -->
   <header>
     <div class="logo-badge">
       <span class="dot"></span>
-      YT Audio Heist · v2.0
+      YT Heist · <v2 class="0 1">v2.0.1</v2>
     </div>
     <h1>
-      <span class="red">YT</span> Audio<br>
-      <span class="purple">Heist</span>
+      <span class="red">YT</span>
+      <span class="purple">HEIST</span>
     </h1>
     <p class="subtitle" id="page-subtitle">
       Agrega links de YouTube, cambia el modo y descarga audio, video o miniaturas desde una sola lista.
@@ -34,6 +35,7 @@
       <button class="mode" data-mode="thumbnail" onclick="setMode('thumbnail')">🖼 Miniatura</button>
     </div>
 
+    <!-- YouTube Search Section: search input + results -->
     <div class="youtube-search-section">
       <div class="search-row-youtube">
         <input
@@ -49,6 +51,7 @@
       <div id="youtube-search-results" class="youtube-results-container"></div>
     </div>
 
+    <!-- Manual Input Section: paste URL and add to list -->
     <div class="manual-input-section">
       <div class="input-row">
         <input
@@ -71,6 +74,7 @@
       </div>
     </div>
 
+    <!-- List Header: title, count, global tools -->
     <div class="list-header">
       <div class="list-header-main">
         <span class="list-title">Tu Lista</span>
@@ -91,6 +95,7 @@
       </div>
     </div>
 
+    <!-- Main List: empty state and items container -->
     <div id="main-list">
       <div class="empty-state" id="main-empty">
         <div class="empty-icon" id="empty-icon">🎵</div>
@@ -99,6 +104,7 @@
       <div class="item-list" id="items-container"></div>
     </div>
 
+    <!-- Batch Bar: batch download actions -->
     <div class="batch-bar" id="main-batch" style="display:none;">
       <button class="batch-btn" id="main-download-btn" onclick="handleBatchDownloadClick()">
         ⬇ Descargar MP3
@@ -110,7 +116,8 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="options-modal">
+  <!-- Options Modal: batch download options -->
+  <div class="modal-overlay" id="options-modal">
   <div class="modal">
     <div class="modal-header">
       <div class="modal-title">Opciones de descarga</div>
@@ -135,7 +142,8 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="modal">
+  <!-- Command Modal: generated yt-dlp command preview -->
+  <div class="modal-overlay" id="modal">
   <div class="modal">
     <div class="modal-header">
       <div>
@@ -156,7 +164,8 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="preview-modal">
+  <!-- Preview Modal: plays embedded YouTube preview for items -->
+  <div class="modal-overlay" id="preview-modal">
   <div class="modal preview-modal">
     <div class="modal-header">
       <div>

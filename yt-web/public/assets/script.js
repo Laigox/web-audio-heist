@@ -1,3 +1,10 @@
+/* ==========================================================
+   Client-side script: public/assets/script.js
+   - Manages UI state, rendering, socket.io events, and user actions
+   - Sections marked below: configuration, state, socket, rendering,
+     metadata, download controls, preview, helpers
+ ========================================================== */
+
 const MODE_STORAGE_KEY = 'yt-audio-heist-mode';
 
 const MODE_CONFIG = {
@@ -79,6 +86,14 @@ if (typeof io !== 'undefined') {
 
 socket.on('connect', () => {
   processMetadataQueue();
+});
+
+socket.on('connect_error', () => {
+  showToast('No se pudo conectar al servidor.', 'error');
+});
+
+socket.on('disconnect', () => {
+  showToast('Conexión al servidor perdida.', 'error');
 });
 
 socket.on('search-results', (results) => {
@@ -666,7 +681,8 @@ function renderSingleCardBody(item, index) {
   const controlBlock = renderControlBlock(item, index);
   const progress = item.status === 'downloading' ? `<div class="progress" id="progress-${getSafeId(item.url)}"></div>` : '';
   const commandButton = `<button class="secondary-btn" onclick="openCommandModal(${index})">⌘ Ver comando</button>`;
-  const previewButton = currentMode === 'audio' && getYTId(item.url)
+  // Mostrar Preview en todos los modos si el item tiene videoId
+  const previewButton = getYTId(item.url)
     ? `<button class="secondary-btn" onclick="openPreview(${index})">▶ Preview</button>`
     : '';
 
@@ -1164,19 +1180,43 @@ function openPreview(index, subIndex = null) {
   if (!target) return;
 
   const videoId = getYTId(target.url);
-  if (!videoId) {
-    showToast('No hay preview disponible para este item.', 'warn');
-    return;
-  }
+  if (!videoId) return showToast('No hay preview disponible para este item.', 'warn');
 
-  document.getElementById('preview-frame').src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+  const iframe = document.getElementById('preview-frame');
+  iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
   document.getElementById('preview-subtitle').textContent = target.title;
   document.getElementById('preview-modal').classList.add('open');
 }
 
 function closePreviewModal() {
-  document.getElementById('preview-frame').src = 'about:blank';
+  const iframe = document.getElementById('preview-frame');
+  if (iframe) iframe.src = 'about:blank';
   document.getElementById('preview-modal').classList.remove('open');
+}
+
+function formatTime(sec) {
+  sec = Math.floor(sec || 0);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function loadYouTubeApi() {
+  return new Promise((resolve, reject) => {
+    if (window.YT && window.YT.Player) return resolve();
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    tag.onload = () => {
+      // wait for YT to be ready
+      const check = () => {
+        if (window.YT && window.YT.Player) return resolve();
+        setTimeout(check, 100);
+      };
+      check();
+    };
+    tag.onerror = reject;
+    document.head.appendChild(tag);
+  });
 }
 
 function showDownloadOptions() {
