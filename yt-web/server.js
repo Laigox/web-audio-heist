@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { spawn } = require('child_process');
 const { Server } = require('socket.io');
 const fs = require('fs');
@@ -7,203 +8,527 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-// Enable CORS so clients served from other origins (Live Preview, file://, etc.) can connect
 const io = new Server(server, { cors: { origin: '*' } });
+const PORT = Number(process.env.PORT) || 3001;
+
+const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
+const publicDir = path.join(__dirname, 'public');
+
+const THUMBNAIL_PRESETS = [
+  { key: 'small', label: 'Pequeña', width: 120, height: 90, file: 'default.jpg' },
+  { key: 'medium', label: 'Media', width: 320, height: 180, file: 'mqdefault.jpg' },
+  { key: 'high', label: 'Alta', width: 640, height: 480, file: 'sddefault.jpg' },
+  { key: 'max', label: 'Máxima', width: 1280, height: 720, file: 'hq720.jpg' },
+  { key: 'hd', label: 'HD', width: 1920, height: 1080, file: 'maxresdefault.jpg' }
+];
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// Serve static files using an absolute path so starting the server from
-// a different working directory won't create duplicate path issues.
-const publicDir = path.join(__dirname, 'public');
-console.log('Serving static files from:', publicDir);
 app.use(express.static(publicDir));
 
 const activeDownloads = new Map();
+const cancelledDownloads = new Set();
 const downloadQueue = [];
 let isProcessingQueue = false;
 
-// Helper to find next available filename with (n)
-async function getAvailableFilename(baseName, downloadsDir) {
-  let fileName = `${baseName}.mp3`;
-  let filePath = path.join(downloadsDir, fileName);
-  
-  if (!fs.existsSync(filePath)) {
-    return fileName;
-  }
+fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-  // Find gaps or next number
-  let n = 1;
-  while (true) {
-    fileName = `${baseName} (${n}).mp3`;
-    filePath = path.join(downloadsDir, fileName);
-    if (!fs.existsSync(filePath)) {
-      return fileName;
-    }
-    n++;
-  }
+function sanitizeTitle(title = 'descarga') {
+  return String(title)
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 80) || 'descarga';
 }
 
-async function processQueue(socket) {
-  if (isProcessingQueue || downloadQueue.length === 0) return;
-  isProcessingQueue = true;
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'Sin duración';
 
-  const item = downloadQueue.shift();
-  const { url, title } = item;
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainingSeconds = total % 60;
 
-  const downloadsDir = path.join(__dirname, 'downloads');
-  fs.mkdirSync(downloadsDir, { recursive: true });
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
 
-  // Clean title for filename
-  const safeTitle = title.replace(/[/\\?%*:|"<>]/g, '-').substring(0, 50);
-  const finalFileName = await getAvailableFilename(safeTitle, downloadsDir);
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
 
-  const yt = spawn('yt-dlp', [
+function getPrimaryExtension(mode) {
+  if (mode === 'video') return 'mp4';
+  if (mode === 'thumbnail') return 'jpg';
+  return 'mp3';
+}
+
+function getAvailableBaseName(baseName, primaryExt) {
+  let attempt = baseName;
+  let index = 1;
+
+  while (fs.existsSync(path.join(DOWNLOAD_DIR, `${attempt}.${primaryExt}`))) {
+    attempt = `${baseName} (${index})`;
+    index += 1;
+  }
+
+  return attempt;
+}
+
+function getVideoId(url) {
+  const match = String(url).match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+function getFallbackThumbnailUrl(videoId, presetKey) {
+  const preset = THUMBNAIL_PRESETS.find((entry) => entry.key === presetKey);
+  if (!videoId || !preset) return null;
+  return `https://img.youtube.com/vi/${videoId}/${preset.file}`;
+}
+
+function buildThumbnailOptions(videoId, thumbnails = []) {
+  const normalized = thumbnails
+    .filter((thumb) => thumb && thumb.url)
+    .map((thumb) => ({
+      url: thumb.url,
+      width: Number(thumb.width) || 0,
+      height: Number(thumb.height) || 0
+    }))
+    .sort((a, b) => (a.width * a.height) - (b.width * b.height));
+
+  return THUMBNAIL_PRESETS.map((preset) => {
+    const exact = normalized.find((thumb) => thumb.width >= preset.width && thumb.height >= preset.height);
+    const fallback = normalized[normalized.length - 1] || null;
+    const chosen = exact || fallback;
+
+    return {
+      key: preset.key,
+      label: preset.label,
+      width: preset.width,
+      height: preset.height,
+      available: Boolean(exact || (videoId && preset.key !== 'hd')),
+      url: exact?.url || getFallbackThumbnailUrl(videoId, preset.key) || fallback?.url || null
+    };
+  });
+}
+
+function normalizeVideoQualities(formats = []) {
+  const seen = new Set();
+  const heights = [];
+
+  formats.forEach((format) => {
+    const hasVideo = format && format.vcodec && format.vcodec !== 'none';
+    const height = Number(format?.height);
+
+    if (!hasVideo || !Number.isFinite(height) || height <= 0 || seen.has(height)) {
+      return;
+    }
+
+    seen.add(height);
+    heights.push(height);
+  });
+
+  heights.sort((a, b) => a - b);
+
+  return heights.map((height) => ({
+    value: String(height),
+    height,
+    label:
+      height === 720 ? '720p (HD)' :
+      height === 1080 ? '1080p (FHD)' :
+      `${height}p`
+  }));
+}
+
+function extractMediaInfo(json) {
+  const videoId = json.id || getVideoId(json.webpage_url || json.original_url || '');
+  const thumbnailOptions = buildThumbnailOptions(videoId, json.thumbnails || []);
+  const availableThumbnail = thumbnailOptions.find((option) => option.available && option.url) || thumbnailOptions[0] || null;
+
+  return {
+    id: videoId,
+    title: json.title || 'Video de YouTube',
+    channel: json.channel || json.uploader || 'Canal desconocido',
+    duration: Number(json.duration) || 0,
+    durationText: formatDuration(Number(json.duration) || 0),
+    videoQualities: normalizeVideoQualities(json.formats || []),
+    thumbnailOptions,
+    thumbnailPreviewUrl: availableThumbnail?.url || null
+  };
+}
+
+function runYtDlp(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('yt-dlp', args);
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+function createAudioArgs(url, outputTemplate, bitrate) {
+  return [
+    '--no-playlist',
     '-x',
     '--audio-format', 'mp3',
+    '--audio-quality', `${bitrate}K`,
     '--newline',
     '--progress',
     '--no-color',
-    '-o',
-    path.join('downloads', finalFileName),
+    '-o', outputTemplate,
     url
-  ]);
+  ];
+}
 
-  activeDownloads.set(url, yt);
+function createVideoArgs(url, outputTemplate, resolution) {
+  const formatSelector = resolution === 'max'
+    ? 'bestvideo+bestaudio/best'
+    : `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
 
-  yt.stdout.on('data', (data) => {
-    const text = data.toString();
-    const match = text.match(/(\d+(\.\d+)?)%/);
-    if (match) {
-      socket.emit('progress', { url, percent: parseFloat(match[1]) });
-    }
+  return [
+    '--no-playlist',
+    '-f', formatSelector,
+    '--merge-output-format', 'mp4',
+    '--newline',
+    '--progress',
+    '--no-color',
+    '-o', outputTemplate,
+    url
+  ];
+}
+
+function getThumbnailExtension(selection) {
+  const source = selection?.url || '';
+  if (/\.png($|\?)/i.test(source)) return 'png';
+  return 'jpg';
+}
+
+function downloadFile(url, destination, onRequest) {
+  return new Promise((resolve, reject) => {
+    const requestUrl = (targetUrl) => {
+      const request = https.get(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0'
+        }
+      }, (response) => {
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          response.resume();
+          requestUrl(new URL(response.headers.location, targetUrl).toString());
+          return;
+        }
+
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new Error(`No se pudo descargar la miniatura (${response.statusCode})`));
+          return;
+        }
+
+        const file = fs.createWriteStream(destination);
+        response.pipe(file);
+
+        file.on('finish', () => {
+          file.close(resolve);
+        });
+
+        file.on('error', (error) => {
+          fs.unlink(destination, () => reject(error));
+        });
+      });
+
+      onRequest(request);
+      request.on('error', reject);
+    };
+
+    requestUrl(url);
+  });
+}
+
+async function downloadThumbnailAsset({
+  queueUrl,
+  baseName,
+  selection,
+  socket,
+  suffix = ''
+}) {
+  if (!selection?.url) {
+    throw new Error('No hay una miniatura disponible para descargar.');
+  }
+
+  socket.emit('progress', { url: queueUrl, percent: 15 });
+
+  const extension = getThumbnailExtension(selection);
+  const fileName = `${baseName}${suffix}.${extension}`;
+  const destination = path.join(DOWNLOAD_DIR, fileName);
+  let requestHandle = null;
+
+  activeDownloads.set(queueUrl, {
+    type: 'request',
+    destroy: () => requestHandle?.destroy()
   });
 
-  yt.on('close', (code) => {
-    activeDownloads.delete(url);
-    if (code === 0) {
-      socket.emit('done', { url, fileName: finalFileName });
+  await downloadFile(selection.url, destination, (request) => {
+    requestHandle = request;
+  });
+
+  if (cancelledDownloads.has(queueUrl)) {
+    cancelledDownloads.delete(queueUrl);
+    if (fs.existsSync(destination)) fs.unlinkSync(destination);
+    return null;
+  }
+
+  activeDownloads.delete(queueUrl);
+  socket.emit('progress', { url: queueUrl, percent: 100 });
+  return fileName;
+}
+
+function emitProgressFromStdout(text, url, socket) {
+  const match = text.match(/(\d+(?:\.\d+)?)%/);
+  if (match) {
+    socket.emit('progress', { url, percent: parseFloat(match[1]) });
+  }
+}
+
+function executeYtDlpDownload(queueItem, socket) {
+  const {
+    url,
+    title,
+    mode = 'audio',
+    qualityValue = 'max',
+    includeThumbnail = false,
+    thumbnailSelection = null
+  } = queueItem;
+
+  const safeTitle = sanitizeTitle(title);
+  const primaryExt = getPrimaryExtension(mode);
+  const baseName = getAvailableBaseName(safeTitle, primaryExt);
+  const outputTemplate = path.join('downloads', `${baseName}.%(ext)s`);
+
+  const args = mode === 'video'
+    ? createVideoArgs(url, outputTemplate, qualityValue)
+    : createAudioArgs(url, outputTemplate, qualityValue || 320);
+
+  return new Promise((resolve) => {
+    const yt = spawn('yt-dlp', args);
+    activeDownloads.set(url, {
+      type: 'process',
+      destroy: () => yt.kill()
+    });
+
+    yt.stdout.on('data', (data) => {
+      emitProgressFromStdout(data.toString(), url, socket);
+    });
+
+    yt.stderr.on('data', (data) => {
+      emitProgressFromStdout(data.toString(), url, socket);
+    });
+
+    yt.on('close', async (code) => {
+      activeDownloads.delete(url);
+
+      if (cancelledDownloads.has(url)) {
+        cancelledDownloads.delete(url);
+        resolve();
+        return;
+      }
+
+      if (code !== 0) {
+        socket.emit('error', { url, message: `No se pudo completar la descarga (${mode}).` });
+        resolve();
+        return;
+      }
+
+      let extraFileName = null;
+
+      try {
+        if (mode === 'video' && includeThumbnail && thumbnailSelection?.url) {
+          socket.emit('progress', { url, percent: 97 });
+          extraFileName = await downloadThumbnailAsset({
+            queueUrl: url,
+            baseName,
+            selection: thumbnailSelection,
+            socket,
+            suffix: '-thumb'
+          });
+        }
+      } catch (error) {
+        socket.emit('error', { url, message: error.message || 'Se descargó el video, pero falló la miniatura.' });
+        socket.emit('done', { url, fileName: `${baseName}.${primaryExt}`, extraFileName: null });
+        resolve();
+        return;
+      }
+
+      socket.emit('done', {
+        url,
+        fileName: `${baseName}.${primaryExt}`,
+        extraFileName
+      });
+      resolve();
+    });
+  });
+}
+
+async function processQueue() {
+  if (isProcessingQueue || downloadQueue.length === 0) return;
+  isProcessingQueue = true;
+
+  const queueItem = downloadQueue.shift();
+  const { socket, payload } = queueItem;
+
+  try {
+    if (payload.mode === 'thumbnail') {
+      const safeTitle = sanitizeTitle(payload.title);
+      const baseName = getAvailableBaseName(safeTitle, 'jpg');
+      const fileName = await downloadThumbnailAsset({
+        queueUrl: payload.url,
+        baseName,
+        selection: payload.thumbnailSelection,
+        socket
+      });
+
+      if (!cancelledDownloads.has(payload.url) && fileName) {
+        socket.emit('done', { url: payload.url, fileName });
+      } else {
+        cancelledDownloads.delete(payload.url);
+      }
     } else {
-      socket.emit('error', { url, code });
+      await executeYtDlpDownload(payload, socket);
     }
-    
+  } catch (error) {
+    if (!cancelledDownloads.has(payload.url)) {
+      socket.emit('error', {
+        url: payload.url,
+        message: error.message || 'La descarga falló.'
+      });
+    } else {
+      cancelledDownloads.delete(payload.url);
+    }
+  } finally {
+    activeDownloads.delete(payload.url);
     isProcessingQueue = false;
-    processQueue(socket); // Process next in queue
-  });
+    processQueue();
+  }
 }
 
 io.on('connection', (socket) => {
   console.log('Cliente conectado');
 
-  socket.on('search-youtube', (data) => {
+  socket.on('search-youtube', async (data) => {
     const { query, count = 5 } = data;
-    console.log('Buscando en YouTube:', query, `(${count} resultados)`);
-    
-    const yt = spawn('yt-dlp', [
+
+    const result = await runYtDlp([
       `ytsearch${count}:${query}`,
       '--dump-single-json',
       '--flat-playlist'
     ]);
 
-    let output = '';
-    let errorOutput = '';
-    
-    yt.stdout.on('data', (data) => {
-      output += data.toString();
-      console.log('yt-dlp stdout chunk received');
-    });
-    
-    yt.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-      console.log('yt-dlp stderr:', data.toString());
-    });
+    if (result.code !== 0) {
+      socket.emit('search-error', { message: 'No se pudo realizar la búsqueda.' });
+      return;
+    }
 
-    yt.on('close', (code) => {
-      console.log('yt-dlp exited with code:', code);
-      console.log('Full stdout:', output);
-      if (errorOutput) console.log('Full stderr:', errorOutput);
-      
-      if (code === 0) {
-        try {
-          const json = JSON.parse(output);
-          console.log('Parsed JSON has entries:', json.entries ? json.entries.length : 'none');
-          
-          if (!json.entries) {
-            socket.emit('search-error', { message: 'No se encontraron resultados' });
-            return;
-          }
-          
-          const results = json.entries.map(entry => ({
-            url: `https://www.youtube.com/watch?v=${entry.id}`,
-            title: entry.title,
-            id: entry.id,
-            thumb: `https://img.youtube.com/vi/${entry.id}/mqdefault.jpg`
-          }));
-          socket.emit('search-results', results);
-        } catch (e) {
-          console.error('Error parsing JSON:', e);
-          socket.emit('search-error', { message: 'Error al procesar los resultados: ' + e.message });
-        }
-      } else {
-        socket.emit('search-error', { message: 'No se pudo realizar la búsqueda. Código de error: ' + code });
-      }
-    });
+    try {
+      const json = JSON.parse(result.stdout);
+      const results = (json.entries || []).map((entry) => ({
+        url: `https://www.youtube.com/watch?v=${entry.id}`,
+        title: entry.title,
+        id: entry.id,
+        thumb: `https://img.youtube.com/vi/${entry.id}/mqdefault.jpg`
+      }));
+      socket.emit('search-results', results);
+    } catch (error) {
+      socket.emit('search-error', { message: 'Error al procesar los resultados.' });
+    }
   });
 
-  socket.on('get-playlist-info', (url) => {
-    console.log('Obteniendo info de playlist:', url);
-    const yt = spawn('yt-dlp', [
+  socket.on('get-playlist-info', async (url) => {
+    const result = await runYtDlp([
       '--dump-single-json',
       '--flat-playlist',
       url
     ]);
 
-    let output = '';
-    yt.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    yt.on('close', (code) => {
-      if (code === 0) {
-        try {
-          const json = JSON.parse(output);
-          const items = json.entries.map(entry => ({
-            url: entry.url || `https://www.youtube.com/watch?v=${entry.id}`,
-            title: entry.title,
-            id: entry.id
-          }));
-          socket.emit('playlist-info', { url, items, title: json.title, id: json.id });
-        } catch (e) {
-          socket.emit('error', { url, message: 'Error al procesar la lista' });
-        }
-      } else {
-        socket.emit('error', { url, message: 'No se pudo obtener la información de la lista' });
-      }
-    });
-  });
-
-  socket.on('download', (data) => {
-    const { url, title } = data;
-    // Check if already in queue or downloading
-    if (activeDownloads.has(url) || downloadQueue.some(i => i.url === url)) return;
-
-    downloadQueue.push({ url, title });
-    processQueue(socket);
-  });
-
-  socket.on('cancel-download', (url) => {
-    // Remove from queue if present
-    const qIdx = downloadQueue.findIndex(i => i.url === url);
-    if (qIdx !== -1) {
-      downloadQueue.splice(qIdx, 1);
-      socket.emit('error', { url, message: 'Descarga cancelada (en cola)' });
+    if (result.code !== 0) {
+      socket.emit('error', { url, message: 'No se pudo obtener la información de la playlist.' });
       return;
     }
 
-    const yt = activeDownloads.get(url);
-    if (yt) {
-      yt.kill();
+    try {
+      const json = JSON.parse(result.stdout);
+      const items = (json.entries || []).map((entry) => ({
+        url: entry.url?.startsWith('http') ? entry.url : `https://www.youtube.com/watch?v=${entry.id}`,
+        title: entry.title,
+        id: entry.id
+      }));
+
+      socket.emit('playlist-info', {
+        url,
+        items,
+        title: json.title,
+        id: json.id
+      });
+    } catch (error) {
+      socket.emit('error', { url, message: 'Error al procesar la playlist.' });
+    }
+  });
+
+  socket.on('get-media-info', async ({ url }) => {
+    const result = await runYtDlp([
+      '--dump-single-json',
+      '--no-playlist',
+      '--no-warnings',
+      url
+    ]);
+
+    if (result.code !== 0) {
+      socket.emit('media-info-error', { url, message: 'No se pudo obtener la información del video.' });
+      return;
+    }
+
+    try {
+      const json = JSON.parse(result.stdout);
+      socket.emit('media-info', {
+        url,
+        info: extractMediaInfo(json)
+      });
+    } catch (error) {
+      socket.emit('media-info-error', { url, message: 'No se pudo interpretar la metadata del video.' });
+    }
+  });
+
+  socket.on('download', (payload) => {
+    const { url } = payload;
+
+    if (activeDownloads.has(url) || downloadQueue.some((entry) => entry.payload.url === url)) {
+      return;
+    }
+
+    downloadQueue.push({ socket, payload });
+    processQueue();
+  });
+
+  socket.on('cancel-download', (url) => {
+    const queueIndex = downloadQueue.findIndex((entry) => entry.payload.url === url);
+    if (queueIndex !== -1) {
+      downloadQueue.splice(queueIndex, 1);
+      socket.emit('error', { url, message: 'Descarga cancelada (en cola).' });
+      return;
+    }
+
+    const active = activeDownloads.get(url);
+    if (active) {
+      cancelledDownloads.add(url);
+      active.destroy();
       activeDownloads.delete(url);
-      socket.emit('error', { url, message: 'Descarga cancelada' });
+      socket.emit('error', { url, message: 'Descarga cancelada.' });
     }
   });
 
@@ -212,6 +537,6 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(3000, () => {
-  console.log('Servidor en http://localhost:3000');
+server.listen(PORT, () => {
+  console.log(`Servidor en http://localhost:${PORT}`);
 });

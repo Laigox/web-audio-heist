@@ -7,33 +7,41 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="assets/style.css">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<!-- Socket.IO client: usar CDN para evitar 404 cuando no se sirve desde el servidor local -->
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" defer></script>
 <script src="assets/script.js" defer></script>
 </head>
-<body>
+<body data-mode="audio">
 
 <div class="wrapper">
-
   <header>
     <div class="logo-badge">
       <span class="dot"></span>
-      YT Audio Heist · v1.0
+      YT Audio Heist · v2.0
     </div>
     <h1>
       <span class="red">YT</span> Audio<br>
       <span class="purple">Heist</span>
     </h1>
-    <p class="subtitle">Agrega links de YouTube — canciones o playlists — y genera los comandos para descargarlos como MP3.</p>
+    <p class="subtitle" id="page-subtitle">
+      Agrega links de YouTube, cambia el modo y descarga audio, video o miniaturas desde una sola lista.
+    </p>
   </header>
 
-  <!-- Unified Input -->
   <div class="panel active">
-    <!-- YouTube Search Section -->
+    <div class="mode-switch" role="tablist" aria-label="Modo de descarga">
+      <button class="mode active" data-mode="audio" onclick="setMode('audio')">🎵 Audio</button>
+      <button class="mode" data-mode="video" onclick="setMode('video')">🎬 Video</button>
+      <button class="mode" data-mode="thumbnail" onclick="setMode('thumbnail')">🖼 Miniatura</button>
+    </div>
+
     <div class="youtube-search-section">
       <div class="search-row-youtube">
-        <input type="text" class="youtube-search-input" id="youtube-search-input"
-          placeholder="🔍 Buscar en YouTube..." />
+        <input
+          type="text"
+          class="youtube-search-input"
+          id="youtube-search-input"
+          placeholder="🔍 Buscar en YouTube..."
+        />
         <button class="search-youtube-btn" onclick="searchYouTube()">
           🔍 Buscar
         </button>
@@ -41,13 +49,16 @@
       <div id="youtube-search-results" class="youtube-results-container"></div>
     </div>
 
-    <!-- Manual URL Input -->
     <div class="manual-input-section">
       <div class="input-row">
-        <input type="text" class="url-input" id="main-input"
-          placeholder="Pega un link de YouTube (canción o playlist)..." />
+        <input
+          type="text"
+          class="url-input"
+          id="main-input"
+          placeholder="Pega un link de YouTube (video o playlist)..."
+        />
         <div class="btn-group">
-          <button class="add-btn" onclick="handleInput()">+ Agregar</button>
+          <button class="add-btn" id="main-add-btn" onclick="handleInput()">+ Agregar</button>
           <div class="history-controls">
             <button id="undo-btn" class="history-btn" onclick="undo()" title="Deshacer (Ctrl+Z)" disabled>
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h10a8 8 0 0 1 8 8v2M3 10l6 6m-6-6l6-6"/></svg>
@@ -61,49 +72,62 @@
     </div>
 
     <div class="list-header">
-      <span class="list-title">Tu Lista</span>
-      <span class="count-badge" id="main-count">0 items</span>
+      <div class="list-header-main">
+        <span class="list-title">Tu Lista</span>
+        <span class="count-badge" id="main-count">0 items</span>
+      </div>
+      <div class="list-tools">
+        <div class="global-quality-wrap" id="global-quality-wrap">
+          <button class="global-quality-btn" id="global-quality-btn" onclick="toggleGlobalQualityMenu(event)">
+            ⚡ Calidad global
+          </button>
+          <div class="global-quality-menu" id="global-quality-menu">
+            <button type="button" onclick="applyGlobalQuality('max')">Máxima disponible</button>
+            <button type="button" onclick="applyGlobalQuality('high')">Alta</button>
+            <button type="button" onclick="applyGlobalQuality('medium')">Media</button>
+            <button type="button" onclick="applyGlobalQuality('low')">Baja</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="main-list">
       <div class="empty-state" id="main-empty">
-        <div class="empty-icon">🎵</div>
-        <p>Aún no hay nada aquí.<br>Pega un link arriba para comenzar.</p>
+        <div class="empty-icon" id="empty-icon">🎵</div>
+        <p id="empty-copy">Aún no hay nada aquí.<br>Pega un link arriba para comenzar.</p>
       </div>
       <div class="item-list" id="items-container"></div>
     </div>
 
     <div class="batch-bar" id="main-batch" style="display:none;">
       <button class="batch-btn" id="main-download-btn" onclick="handleBatchDownloadClick()">
-        ⬇ Descargar Lista
+        ⬇ Descargar MP3
       </button>
       <button class="batch-btn danger" onclick="clearAll()">
         🗑 Limpiar lista
       </button>
     </div>
   </div>
-
 </div>
 
-<!-- DOWNLOAD OPTIONS MODAL -->
 <div class="modal-overlay" id="options-modal">
   <div class="modal">
     <div class="modal-header">
-      <div class="modal-title">Opciones de Descarga</div>
+      <div class="modal-title">Opciones de descarga</div>
       <button class="close-btn" onclick="closeOptionsModal()">✕</button>
     </div>
     <div class="options-grid">
       <button type="button" class="option-card" onclick="startBatchDownload('all')">
         <div class="option-icon">🔄</div>
         <div class="option-info">
-          <div class="option-title">Descargar Nuevamente</div>
+          <div class="option-title">Descargar nuevamente</div>
           <p>Descarga todo, incluso lo que ya bajaste anteriormente.</p>
         </div>
       </button>
       <button type="button" class="option-card" onclick="startBatchDownload('new')">
         <div class="option-icon">✨</div>
         <div class="option-info">
-          <div class="option-title">Descargar Solo lo Nuevo</div>
+          <div class="option-title">Descargar solo lo nuevo</div>
           <p>Solo descarga los items que aún no se han bajado.</p>
         </div>
       </button>
@@ -111,31 +135,48 @@
   </div>
 </div>
 
-<!-- MODAL -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <div class="modal-header">
       <div>
-        <div class="modal-title">Comando para descargar</div>
+        <div class="modal-title">Comando generado</div>
         <div class="modal-subtitle" id="modal-subtitle"></div>
       </div>
       <button class="close-btn" onclick="closeModal()">✕</button>
     </div>
     <div class="install-note">
-      <strong>Requisito:</strong> Necesitas tener instalado <strong>yt-dlp</strong> y <strong>ffmpeg</strong>.<br>
-      Instalar: <code>pip install yt-dlp</code> — luego copia y pega el comando en tu terminal.
+      <strong>Requisito:</strong> necesitas tener instalado <strong>yt-dlp</strong> y, para audio/video, <strong>ffmpeg</strong>.<br>
+      Instalar: <code>pip install yt-dlp</code>
     </div>
     <div class="cmd-block" id="modal-cmd">
       <button class="copy-btn" onclick="copyCmd()" id="copy-btn">Copiar</button>
       <span id="cmd-text"></span>
     </div>
-    <div style="font-size:0.75rem; color: var(--muted); font-family: var(--mono);">
-      El audio se guardará en la carpeta <code style="color:#a78bfa;">~/Descargas/</code> en formato <code style="color:var(--green);">.mp3</code>
+    <div class="modal-save-note" id="modal-save-note"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="preview-modal">
+  <div class="modal preview-modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Preview</div>
+        <div class="modal-subtitle" id="preview-subtitle"></div>
+      </div>
+      <button class="close-btn" onclick="closePreviewModal()">✕</button>
+    </div>
+    <div class="preview-frame-wrap">
+      <iframe
+        id="preview-frame"
+        src="about:blank"
+        title="Preview de YouTube"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen
+      ></iframe>
     </div>
   </div>
 </div>
 
-<!-- TOAST -->
 <div class="toast" id="toast"></div>
 
 </body>
