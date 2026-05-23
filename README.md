@@ -6,7 +6,7 @@ La idea principal es que el usuario no tenga que pelearse todo el tiempo con com
 
 ## Estado actual
 
-La página está en **v2.0** (Pero no ha sido terminada completamente).
+La página está en **v2.0**.
 
 La v2 amplía la app para trabajar con:
 
