@@ -1,4 +1,4 @@
-## v2.0.1 - Audio pipeline update
+## v2.0.0 -> v2.0.1 - Audio pipeline update
 
 ### Cambios
 

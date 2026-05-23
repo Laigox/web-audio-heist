@@ -6,7 +6,7 @@ La idea principal es que el usuario no tenga que pelearse todo el tiempo con com
 
 ## Estado actual
 
-La página está en **v2.0**.
+La página está en **v2.0.1** (Detalles de la ultima actualizacion en el archivo [CHANGES.md]).
 
 La v2 amplía la app para trabajar con:
 
@@ -260,7 +260,7 @@ Esto es importante porque en el modal de comando todavía se muestran comandos p
 ## Estructura básica del proyecto
 
 ```text
-DESCARGAR CANCIONES/
+MULTIMEDIA_DOWLOAD/
 ├─ README.md
 └─ yt-web/
    ├─ server.js
