@@ -207,6 +207,13 @@ socket.on('error', (data) => {
   showToast(message || 'La descarga falló.', 'error');
 });
 
+/**
+ * buildDefaultQualityState
+ * Devuelve el estado por defecto de selección de calidad para un nuevo item.
+ * - `audio`: bitrate por defecto (Kbps)
+ * - `video`: resolución por defecto ('max' = la mejor disponible)
+ * - `thumbnail`: preset por defecto para miniaturas
+ */
 function buildDefaultQualityState() {
   return {
     audio: '320',
@@ -215,6 +222,17 @@ function buildDefaultQualityState() {
   };
 }
 
+/**
+ * createMediaEntry
+ * Crea la estructura interna que representa un item en la lista.
+ * Parámetros:
+ * - `url`: URL del video o playlist
+ * - `title`: título opcional (si no, se genera por `getTitle`)
+ * - `thumb`: miniatura inicial
+ * - `isPlaylist`: booleano si es playlist
+ * - `playlistItems`: lista de sub-items cuando es playlist
+ * Devuelve un objeto con campos usados por la UI y la lógica de descarga.
+ */
 function createMediaEntry({ url, title = null, thumb = null, isPlaylist = false, playlistItems = null }) {
   return {
     url,
@@ -236,12 +254,22 @@ function createMediaEntry({ url, title = null, thumb = null, isPlaylist = false,
   };
 }
 
+/**
+ * saveState
+ * Guarda el estado actual de `items` en la pila de deshacer (undo).
+ * También limpia la pila de rehacer (redo) para mantener consistencia.
+ */
 function saveState() {
   undoStack.push(JSON.stringify(items));
   redoStack = [];
   updateHistoryButtons();
 }
 
+/**
+ * undo
+ * Restaura el último estado guardado en la pila de `undo`.
+ * Guarda el estado actual en `redo` para permitir rehacer.
+ */
 function undo() {
   if (undoStack.length === 0) return;
   redoStack.push(JSON.stringify(items));
@@ -251,6 +279,10 @@ function undo() {
   showToast('Acción deshecha.', 'success');
 }
 
+/**
+ * redo
+ * Re-aplica la última acción deshecha, si existe.
+ */
 function redo() {
   if (redoStack.length === 0) return;
   undoStack.push(JSON.stringify(items));
@@ -276,6 +308,11 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * searchYouTube
+ * Solicita al servidor una búsqueda en YouTube usando `yt-dlp`.
+ * Validaciones: requiere texto en el input; actualiza la UI inicial.
+ */
 function searchYouTube() {
   const input = document.getElementById('youtube-search-input');
   const query = input.value.trim();
@@ -297,6 +334,11 @@ function loadMoreResults() {
   renderYouTubeResults();
 }
 
+/**
+ * renderYouTubeResults
+ * Pinta los resultados devueltos por la búsqueda en el contenedor
+ * `#youtube-search-results`. Maneja paginación básica (cargar más).
+ */
 function renderYouTubeResults() {
   const container = document.getElementById('youtube-search-results');
   if (!container) return;
@@ -335,6 +377,11 @@ function renderYouTubeResults() {
   container.innerHTML = html;
 }
 
+/**
+ * addResultToItems
+ * Añade el resultado seleccionado a la lista de items. Si es playlist,
+ * solicita al servidor la información de la playlist y crea sub-items.
+ */
 function addResultToItems(url, title, thumb = null) {
   if (url.includes('playlist') || url.includes('list=')) {
     showToast('Obteniendo información de la playlist...', 'success');
@@ -345,6 +392,11 @@ function addResultToItems(url, title, thumb = null) {
   addItem(url, title, thumb);
 }
 
+/**
+ * getYTId
+ * Extrae el videoId de YouTube a partir de una URL.
+ * Retorna `null` si no encuentra un ID válido.
+ */
 function getYTId(url) {
   const match = String(url).match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return match ? match[1] : null;
@@ -366,6 +418,11 @@ function isValidYT(url) {
   return url.includes('youtube.com') || url.includes('youtu.be');
 }
 
+/**
+ * handleInput
+ * Maneja el input principal cuando el usuario pega un link y presiona +Agregar.
+ * Valida que sea un link de YouTube y decide si es video o playlist.
+ */
 function handleInput() {
   const input = document.getElementById('main-input');
   const url = input.value.trim();
@@ -390,6 +447,12 @@ function handleInput() {
   input.value = '';
 }
 
+/**
+ * addItem
+ * Añade un nuevo item (video o playlist) a la lista interna `items`.
+ * Cuando se agrega un video se encola la petición de metadata para poblar
+ * las opciones reales de calidad.
+ */
 function addItem(url, title = null, thumb = null, isPlaylist = false, playlistItems = null) {
   if (items.some((entry) => entry.url === url)) {
     showToast('Ese link ya está en la lista.', 'warn');
@@ -440,6 +503,11 @@ function sortItems() {
   });
 }
 
+/**
+ * queueMetadataFetch
+ * Encola la petición de metadata para un URL. Evita duplicados y usa cache
+ * en `metadataCache` si ya está disponible.
+ */
 function queueMetadataFetch(url) {
   if (!url || pendingMetadataUrls.has(url)) return;
 
@@ -453,12 +521,22 @@ function queueMetadataFetch(url) {
   processMetadataQueue();
 }
 
+/**
+ * processMetadataQueue
+ * Procesa la cola de metadata enviando un `get-media-info` al servidor
+ * para el siguiente URL pendiente.
+ */
 function processMetadataQueue() {
   if (metadataRequestInFlight || metadataQueue.length === 0) return;
   metadataRequestInFlight = metadataQueue.shift();
   socket.emit('get-media-info', { url: metadataRequestInFlight });
 }
 
+/**
+ * applyMetadataToItems
+ * Aplica la metadata recibida del servidor a los items correspondientes
+ * actualizando `meta`, `thumbnail`, `title` y las opciones de calidad.
+ */
 function applyMetadataToItems(url, info) {
   items.forEach((entry) => {
     if (!entry.isPlaylist && entry.url === url) {
@@ -479,6 +557,12 @@ function applyMetadataToItems(url, info) {
   });
 }
 
+/**
+ * hydrateEntry
+ * Rellena un `entry` con la metadata obtenida (`extractMediaInfo` en server).
+ * - `allowTitleOverwrite`: si true, reemplaza títulos por defecto.
+ * - Actualiza `meta`, `metadataStatus`, `thumb` y las calidades.
+ */
 function hydrateEntry(entry, info, allowTitleOverwrite) {
   entry.meta = info;
   entry.metadataStatus = 'ready';
@@ -508,6 +592,11 @@ function markMetadataError(url) {
   });
 }
 
+/**
+ * getThumbnailOptions
+ * Construye las opciones de miniatura para un entry usando metadata o
+ * una URL fallback basada en el videoId.
+ */
 function getThumbnailOptions(entry) {
   const fromMeta = entry.meta?.thumbnailOptions || [];
   const fallbackId = getYTId(entry.url);
@@ -1175,6 +1264,12 @@ async function copyCmd() {
   }, 1400);
 }
 
+/**
+ * openPreview
+ * Abre el modal de preview embebido usando el `videoId` de YouTube.
+ * - Busca el `iframe#preview-frame` y setea `src` con `embed/<videoId>?autoplay=1`.
+ * - Actualiza el subtitle del modal.
+ */
 function openPreview(index, subIndex = null) {
   const target = subIndex === null ? items[index] : items[index]?.playlistItems?.[subIndex];
   if (!target) return;

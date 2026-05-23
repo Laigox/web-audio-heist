@@ -45,6 +45,13 @@ let isProcessingQueue = false;
 
 fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
+/**
+ * sanitizeTitle(title)
+ * Normaliza un título para usarlo como nombre de archivo:
+ * - elimina caracteres inválidos en rutas
+ * - normaliza espacios
+ * - recorta a 80 caracteres
+ */
 function sanitizeTitle(title = 'descarga') {
   return String(title)
     .replace(/[/\\?%*:|"<>]/g, '-')
@@ -53,6 +60,10 @@ function sanitizeTitle(title = 'descarga') {
     .substring(0, 80) || 'descarga';
 }
 
+/**
+ * formatDuration(seconds)
+ * Convierte segundos a una cadena legible: H:MM:SS o M:SS.
+ */
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'Sin duración';
 
@@ -68,12 +79,21 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
+/**
+ * getPrimaryExtension(mode)
+ * Devuelve la extensión de archivo principal según el `mode` solicitado.
+ */
 function getPrimaryExtension(mode) {
   if (mode === 'video') return 'mp4';
   if (mode === 'thumbnail') return 'jpg';
   return 'mp3';
 }
 
+/**
+ * getAvailableBaseName(baseName, primaryExt)
+ * Evita colisiones en la carpeta `downloads` añadiendo sufijos `(n)` cuando
+ * ya existe un fichero con el mismo nombre.
+ */
 function getAvailableBaseName(baseName, primaryExt) {
   let attempt = baseName;
   let index = 1;
@@ -86,17 +106,31 @@ function getAvailableBaseName(baseName, primaryExt) {
   return attempt;
 }
 
+/**
+ * getVideoId(url)
+ * Extrae el videoId de una URL de YouTube si está presente.
+ */
 function getVideoId(url) {
   const match = String(url).match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return match ? match[1] : null;
 }
 
+/**
+ * getFallbackThumbnailUrl(videoId, presetKey)
+ * Construye una URL de miniatura `img.youtube.com` en caso de no haber
+ * miniaturas detectadas en la metadata.
+ */
 function getFallbackThumbnailUrl(videoId, presetKey) {
   const preset = THUMBNAIL_PRESETS.find((entry) => entry.key === presetKey);
   if (!videoId || !preset) return null;
   return `https://img.youtube.com/vi/${videoId}/${preset.file}`;
 }
 
+/**
+ * buildThumbnailOptions(videoId, thumbnails)
+ * Normaliza la lista de miniaturas y la mapea a los presets disponibles,
+ * devolviendo objetos con `available` y `url` para cada preset.
+ */
 function buildThumbnailOptions(videoId, thumbnails = []) {
   const normalized = thumbnails
     .filter((thumb) => thumb && thumb.url)
@@ -123,6 +157,11 @@ function buildThumbnailOptions(videoId, thumbnails = []) {
   });
 }
 
+/**
+ * normalizeVideoQualities(formats)
+ * Extrae alturas únicas (p) de `formats` provistos por yt-dlp y retorna
+ * un array ordenado con `value` y `label` que consume el frontend.
+ */
 function normalizeVideoQualities(formats = []) {
   const seen = new Set();
   const heights = [];
@@ -151,6 +190,11 @@ function normalizeVideoQualities(formats = []) {
   }));
 }
 
+/**
+ * extractMediaInfo(json)
+ * A partir del JSON que devuelve `yt-dlp --dump-single-json`, construye un
+ * objeto con: id, title, channel, duración, opciones de video y miniaturas.
+ */
 function extractMediaInfo(json) {
   const videoId = json.id || getVideoId(json.webpage_url || json.original_url || '');
   const thumbnailOptions = buildThumbnailOptions(videoId, json.thumbnails || []);
@@ -168,6 +212,11 @@ function extractMediaInfo(json) {
   };
 }
 
+/**
+ * runYtDlp(args)
+ * Ejecuta `yt-dlp` con los argumentos dados y recoge `stdout`/`stderr`.
+ * Retorna un objeto { code, stdout, stderr } cuando el proceso termina.
+ */
 function runYtDlp(args) {
   return new Promise((resolve, reject) => {
     const child = spawn('yt-dlp', args);
@@ -187,6 +236,10 @@ function runYtDlp(args) {
   });
 }
 
+/**
+ * createAudioArgs(url, outputTemplate, bitrate)
+ * Construye el array de argumentos para `yt-dlp` cuando se solicita audio.
+ */
 function createAudioArgs(url, outputTemplate, bitrate) {
   return [
     '--no-playlist',
@@ -201,6 +254,11 @@ function createAudioArgs(url, outputTemplate, bitrate) {
   ];
 }
 
+/**
+ * createVideoArgs(url, outputTemplate, resolution)
+ * Construye el selector de formatos para `yt-dlp` según la resolución
+ * deseada y genera la lista de argumentos para descargar y unir streams.
+ */
 function createVideoArgs(url, outputTemplate, resolution) {
   const formatSelector = resolution === 'max'
     ? 'bestvideo+bestaudio/best'
@@ -227,7 +285,13 @@ function getThumbnailExtension(selection) {
 function downloadFile(url, destination, onRequest) {
   return new Promise((resolve, reject) => {
     const requestUrl = (targetUrl) => {
-      const request = https.get(targetUrl, {
+    /**
+     * downloadFile(url, destination, onRequest)
+     * Descarga un recurso HTTP(S) y lo escribe en `destination`.
+     * Soporta redirecciones 3xx y expone el request vía `onRequest` para poder
+     * cancelar la descarga desde el exterior.
+     */
+    const request = https.get(targetUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0'
         }
@@ -271,6 +335,11 @@ async function downloadThumbnailAsset({
   socket,
   suffix = ''
 }) {
+  /**
+   * downloadThumbnailAsset({ queueUrl, baseName, selection, socket, suffix })
+   * Descarga la miniatura seleccionada y la guarda en `downloads` usando
+   * `baseName` + `suffix`. Emite progreso a través del socket.
+   */
   if (!selection?.url) {
     throw new Error('No hay una miniatura disponible para descargar.');
   }
@@ -303,6 +372,11 @@ async function downloadThumbnailAsset({
 }
 
 function emitProgressFromStdout(text, url, socket) {
+  /**
+   * emitProgressFromStdout(text, url, socket)
+   * Extrae porcentajes del texto de salida de procesos (ej: ffmpeg/yt-dlp)
+   * y emite eventos `progress` por socket para actualizar la UI.
+   */
   const match = text.match(/(\d+(?:\.\d+)?)%/);
   if (match) {
     socket.emit('progress', { url, percent: parseFloat(match[1]) });
@@ -310,6 +384,12 @@ function emitProgressFromStdout(text, url, socket) {
 }
 
 async function inspectAudioCodec(filePath) {
+  /**
+   * inspectAudioCodec(filePath)
+   * Ejecuta `ffmpeg -i <file>` y analiza la salida para detectar el códec
+   * de audio que contiene el archivo. Retorna el nombre del códec en minúsculas
+   * o `null` si no se pudo determinar.
+   */
   return new Promise((resolve) => {
     try {
       const ff = spawn('ffmpeg', ['-i', filePath]);
@@ -327,6 +407,12 @@ async function inspectAudioCodec(filePath) {
 }
 
 function reencodeAudioToAac(baseName, primaryExt, socket, url) {
+  /**
+   * reencodeAudioToAac(baseName, primaryExt, socket, url)
+   * Re-encodea el archivo de salida conservando el video (`-c:v copy`) y
+   * convirtiendo el audio a `aac` con bitrate constante. Emite progreso
+   * extraído de la salida de `ffmpeg`.
+   */
   return new Promise((resolve, reject) => {
     const origPath = path.join(DOWNLOAD_DIR, `${baseName}.${primaryExt}`);
     const tmpName = `${baseName}.reencoded.${primaryExt}`;
@@ -365,6 +451,12 @@ function reencodeAudioToAac(baseName, primaryExt, socket, url) {
 }
 
 function executeYtDlpDownload(queueItem, socket) {
+    /**
+     * executeYtDlpDownload(queueItem, socket)
+     * Ejecuta la descarga de un item con `yt-dlp`. Dependiendo del `mode`
+     * construye args de audio/video, mide progreso, y al finalizar puede
+     * descargar miniatura adicional o re-encodear audio si el códec es Opus.
+     */
   const {
     url,
     title,
@@ -473,6 +565,12 @@ function executeYtDlpDownload(queueItem, socket) {
 }
 
 async function processQueue() {
+    /**
+     * processQueue
+     * Procesa la cola de descargas en `downloadQueue` de forma secuencial.
+     * Soporta descarga de thumbnails via `downloadThumbnailAsset` o
+     * descargas complejas mediante `executeYtDlpDownload`.
+     */
   if (isProcessingQueue || downloadQueue.length === 0) return;
   isProcessingQueue = true;
 

@@ -27,12 +27,14 @@
    - Modals: command/options/preview
  ========================================================== */
 
+/* Global: aplicable a todos los elementos del documento */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+/* Body: fondo principal, tipografía y estilos base del layout */
 body {
   min-height: 100vh;
   overflow-x: hidden;
@@ -66,6 +68,7 @@ body::before {
   padding: 42px 0 80px;
 }
 
+/* Header: logo, título y subtítulo (elemento <header>) */
 header {
   margin-bottom: 34px;
   text-align: center;
