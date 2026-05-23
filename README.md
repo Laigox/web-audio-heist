@@ -1,4 +1,4 @@
-# YT Audio Heist
+# YT Heist
 
 YT Audio Heist es una app web para gestionar links de YouTube, armar una lista de descargas y bajar contenido con `yt-dlp` desde una interfaz visual. El proyecto está hecho con frontend vanilla (`HTML`, `CSS`, `JS`) y backend en `Node.js` con `Express` y `Socket.IO`.
 
@@ -260,7 +260,7 @@ Esto es importante porque en el modal de comando todavía se muestran comandos p
 ## Estructura básica del proyecto
 
 ```text
-MULTIMEDIA_DOWLOAD/
+MULTIMEDIA DOWNLOAD/
 ├─ README.md
 └─ yt-web/
    ├─ server.js
