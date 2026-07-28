@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YT Heist</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="yt-web/public/assets/style.css">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" defer></script>
-<script src="assets/script.js" defer></script>
+<script src="yt-web/public/assets/script.js" defer></script>
 </head>
 <body data-mode="audio">
 
@@ -91,6 +91,10 @@
             <button type="button" onclick="applyGlobalQuality('medium')">Media</button>
             <button type="button" onclick="applyGlobalQuality('low')">Baja</button>
           </div>
+        </div>
+        <div class="global-format-wrap" id="global-format-wrap" style="display:none;">
+          <button type="button" class="global-format-btn active" data-format="mp3" onclick="applyGlobalAudioFormat('mp3')">MP3</button>
+          <button type="button" class="global-format-btn" data-format="m4a" onclick="applyGlobalAudioFormat('m4a')">M4A</button>
         </div>
       </div>
     </div>

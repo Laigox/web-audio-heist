@@ -11,11 +11,11 @@ const MODE_CONFIG = {
   audio: {
     icon: '🎵',
     label: 'Audio',
-    actionLabel: '⬇ Descargar MP3',
-    doneLabel: 'Descargar MP3 otra vez',
+    actionLabel: '⬇ Descargar audio',
+    doneLabel: 'Descargar audio otra vez',
     emptyIcon: '🎵',
     emptyCopy: 'Aún no hay nada aquí.<br>Pega un link arriba para comenzar.',
-    subtitle: 'Arma tu lista y baja cada video en MP3 con bitrate por item.'
+    subtitle: 'Arma tu lista y baja cada video en MP3 o M4A con bitrate por item.'
   },
   video: {
     icon: '🎬',
@@ -42,6 +42,11 @@ const AUDIO_QUALITY_OPTIONS = [
   { value: '128', shortLabel: 'Media', label: 'Media · 128 Kbps' },
   { value: '256', shortLabel: 'Alta', label: 'Alta · 256 Kbps' },
   { value: '320', shortLabel: 'Máxima', label: 'Máxima · 320 Kbps' }
+];
+
+const AUDIO_FORMAT_OPTIONS = [
+  { value: 'mp3', label: 'MP3' },
+  { value: 'm4a', label: 'M4A' }
 ];
 
 const THUMBNAIL_OPTIONS = [
@@ -217,6 +222,7 @@ socket.on('error', (data) => {
 function buildDefaultQualityState() {
   return {
     audio: '320',
+    audioFormat: 'mp3',
     video: 'max',
     thumbnail: 'max'
   };
@@ -659,6 +665,13 @@ function resolveAudioSelection(requestedValue) {
   return '320';
 }
 
+function resolveAudioFormat(requestedValue) {
+  if (AUDIO_FORMAT_OPTIONS.some((option) => option.value === String(requestedValue))) {
+    return String(requestedValue);
+  }
+  return 'mp3';
+}
+
 function resolveThumbnailSelection(entry, requestedValue) {
   const options = getThumbnailOptions(entry);
   const key = requestedValue === 'max' ? 'max' : String(requestedValue || 'max');
@@ -667,6 +680,7 @@ function resolveThumbnailSelection(entry, requestedValue) {
 
 function syncEntryQuality(entry) {
   entry.quality.audio = resolveAudioSelection(entry.quality.audio);
+  entry.quality.audioFormat = resolveAudioFormat(entry.quality.audioFormat);
   entry.quality.video = resolveVideoSelection(entry, entry.quality.video);
   entry.quality.thumbnail = resolveThumbnailSelection(entry, entry.quality.thumbnail);
 }
@@ -692,7 +706,10 @@ function updateModeUI() {
   document.getElementById('empty-icon').textContent = config.emptyIcon;
   document.getElementById('empty-copy').innerHTML = config.emptyCopy;
   document.getElementById('page-subtitle').textContent = config.subtitle;
-  document.getElementById('global-quality-wrap').style.display = currentMode === 'thumbnail' ? 'none' : 'block';
+
+  document.getElementById('global-quality-wrap').style.display = currentMode === 'thumbnail' ? 'none' : 'flex';
+  document.getElementById('global-format-wrap').style.display = currentMode === 'audio' ? 'flex' : 'none';
+  updateGlobalFormatButtons();
 }
 
 function render() {
@@ -869,6 +886,10 @@ function renderSubThumb(subItem) {
 function renderMetaLine(item, isPlaylist) {
   const chips = [];
 
+  if (!isPlaylist && currentMode === 'audio') {
+    chips.push(`<span class="meta-chip">${item.quality.audioFormat?.toUpperCase() || 'MP3'}</span>`);
+  }
+
   if (isPlaylist) {
     chips.push(`<span class="meta-chip">${item.playlistItems?.length || 0} items</span>`);
     chips.push(`<span class="meta-chip">${getPlaylistSelectionSummary(item)}</span>`);
@@ -905,6 +926,7 @@ function renderControlBlock(item, index, subIndex = null) {
         <label>${getQualityLabelTitle(currentMode)}</label>
         ${renderQualitySelect(item, index, subIndex)}
       </div>
+      ${currentMode === 'audio' ? renderFormatControls(item, index, subIndex) : ''}
       ${currentMode === 'video' ? renderThumbnailToggle(item, index, subIndex) : ''}
     </div>
   `;
@@ -936,6 +958,24 @@ function renderQualitySelect(item, index, subIndex = null) {
     <select class="quality-select" onchange="${changeHandler}" ${disabled ? 'disabled' : ''}>
       ${htmlOptions}
     </select>
+  `;
+}
+
+function renderFormatControls(item, index, subIndex = null) {
+  const selected = item.quality.audioFormat || 'mp3';
+  const buttons = AUDIO_FORMAT_OPTIONS.map((option) => `
+    <button
+      type="button"
+      class="format-option-btn ${selected === option.value ? 'active' : ''}"
+      onclick="changeItemAudioFormat(${index}, '${option.value}', ${subIndex === null ? 'null' : subIndex})"
+    >${option.label}</button>
+  `).join('');
+
+  return `
+    <div class="control-group format-group">
+      <label>Formato</label>
+      <div class="format-options">${buttons}</div>
+    </div>
   `;
 }
 
@@ -1112,6 +1152,26 @@ function changeItemQuality(index, value) {
   render();
 }
 
+function changeItemAudioFormat(index, format, subIndex = null) {
+  const item = subIndex === null ? items[index] : items[index]?.playlistItems?.[subIndex];
+  if (!item) return;
+
+  applyAudioFormatToEntry(item, format);
+  render();
+}
+
+function applyAudioFormatToEntry(entry, format) {
+  entry.quality.audioFormat = resolveAudioFormat(format);
+}
+
+function updateGlobalFormatButtons() {
+  const activeFormat = items[0]?.quality.audioFormat || 'mp3';
+  const buttons = document.querySelectorAll('.global-format-btn');
+  buttons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.format === activeFormat);
+  });
+}
+
 function changeSubItemQuality(index, subIndex, value) {
   const subItem = items[index]?.playlistItems?.[subIndex];
   if (!subItem) return;
@@ -1157,6 +1217,23 @@ function applyGlobalQuality(level) {
     applyQualityToEntry(entry, currentMode, getGlobalQualityValue(level));
   });
 
+  render();
+}
+
+function applyGlobalAudioFormat(format) {
+  const resolvedFormat = resolveAudioFormat(format);
+
+  items.forEach((entry) => {
+    if (entry.isPlaylist && entry.playlistItems) {
+      entry.quality.audioFormat = resolvedFormat;
+      entry.playlistItems.forEach((subItem) => applyAudioFormatToEntry(subItem, resolvedFormat));
+      return;
+    }
+
+    applyAudioFormatToEntry(entry, resolvedFormat);
+  });
+
+  updateGlobalFormatButtons();
   render();
 }
 
@@ -1216,14 +1293,15 @@ function openCommandModal(index, subIndex = null) {
 function getCommand(item) {
   if (currentMode === 'audio') {
     const bitrate = item.quality.audio;
-    return `yt-dlp -x --audio-format mp3 --audio-quality ${bitrate}K -o "~/Descargas/%(title)s.%(ext)s" "${item.url}"`;
+    const format = item.quality.audioFormat || 'mp3';
+    return `yt-dlp -x --audio-format ${format} --audio-quality ${bitrate}K -o "~/Descargas/%(title)s.%(ext)s" "${item.url}"`;
   }
 
   if (currentMode === 'video') {
     const resolution = resolveVideoSelection(item, item.quality.video);
     const format = resolution === 'max'
-      ? 'bestvideo+bestaudio/best'
-      : `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
+      ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+      : `bestvideo[height<=${resolution}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
     const thumbnailFlags = item.videoIncludeThumbnail ? ' --write-thumbnail --convert-thumbnails jpg' : '';
     return `yt-dlp -f "${format}" --merge-output-format mp4${thumbnailFlags} -o "~/Descargas/%(title)s.%(ext)s" "${item.url}"`;
   }
@@ -1233,7 +1311,7 @@ function getCommand(item) {
 
 function getSaveNote(item) {
   if (currentMode === 'audio') {
-    return `El archivo se guardará en ~/Descargas/ como MP3 con ${getSelectedQualityLabel(item, 'audio')}.`;
+    return `El archivo se guardará en ~/Descargas/ como ${item.quality.audioFormat?.toUpperCase() || 'MP3'} con ${getSelectedQualityLabel(item, 'audio')}.`;
   }
 
   if (currentMode === 'video') {
@@ -1367,6 +1445,7 @@ function buildDownloadPayload(item) {
         : currentMode === 'video'
           ? resolveVideoSelection(item, item.quality.video)
           : item.quality.thumbnail,
+    audioFormat: currentMode === 'audio' ? item.quality.audioFormat : 'mp3',
     includeThumbnail: currentMode === 'video' ? item.videoIncludeThumbnail : false,
     thumbnailSelection: selectedThumbnail ? {
       key: selectedThumbnail.key,

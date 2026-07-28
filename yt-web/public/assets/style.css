@@ -380,13 +380,33 @@ h1 .purple { color: var(--accent-2); }
 
 .global-quality-wrap {
   position: relative;
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
 }
 
+.global-format-wrap {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.global-format-btn,
 .global-quality-btn {
   padding: 11px 16px;
   color: var(--text);
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.global-format-btn.active,
+.global-format-btn:hover,
+.global-quality-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .global-quality-menu {
@@ -660,6 +680,28 @@ h1 .purple { color: var(--accent-2); }
 .control-group {
   display: grid;
   gap: 8px;
+}
+
+.format-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.format-option-btn {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.format-option-btn.active,
+.format-option-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .control-group label,

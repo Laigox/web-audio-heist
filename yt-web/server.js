@@ -83,10 +83,10 @@ function formatDuration(seconds) {
  * getPrimaryExtension(mode)
  * Devuelve la extensión de archivo principal según el `mode` solicitado.
  */
-function getPrimaryExtension(mode) {
+function getPrimaryExtension(mode, audioFormat = 'mp3') {
   if (mode === 'video') return 'mp4';
   if (mode === 'thumbnail') return 'jpg';
-  return 'mp3';
+  return audioFormat === 'm4a' ? 'm4a' : 'mp3';
 }
 
 /**
@@ -240,11 +240,15 @@ function runYtDlp(args) {
  * createAudioArgs(url, outputTemplate, bitrate)
  * Construye el array de argumentos para `yt-dlp` cuando se solicita audio.
  */
-function createAudioArgs(url, outputTemplate, bitrate) {
+function createAudioArgs(url, outputTemplate, bitrate, audioFormat = 'mp3') {
+  const format = ['m4a', 'mp3'].includes(String(audioFormat).toLowerCase())
+    ? String(audioFormat).toLowerCase()
+    : 'mp3';
+
   return [
     '--no-playlist',
     '-x',
-    '--audio-format', 'mp3',
+    '--audio-format', format,
     '--audio-quality', `${bitrate}K`,
     '--newline',
     '--progress',
@@ -261,8 +265,8 @@ function createAudioArgs(url, outputTemplate, bitrate) {
  */
 function createVideoArgs(url, outputTemplate, resolution) {
   const formatSelector = resolution === 'max'
-    ? 'bestvideo+bestaudio/best'
-    : `bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
+    ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+    : `bestvideo[height<=${resolution}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${resolution}]+bestaudio/best[height<=${resolution}]`;
 
   return [
     '--no-playlist',
@@ -467,13 +471,13 @@ function executeYtDlpDownload(queueItem, socket) {
   } = queueItem;
 
   const safeTitle = sanitizeTitle(title);
-  const primaryExt = getPrimaryExtension(mode);
+  const primaryExt = getPrimaryExtension(mode, queueItem.audioFormat);
   const baseName = getAvailableBaseName(safeTitle, primaryExt);
   const outputTemplate = path.join('downloads', `${baseName}.%(ext)s`);
 
   const args = mode === 'video'
     ? createVideoArgs(url, outputTemplate, qualityValue)
-    : createAudioArgs(url, outputTemplate, qualityValue || 320);
+    : createAudioArgs(url, outputTemplate, qualityValue || 320, queueItem.audioFormat);
 
   return new Promise((resolve) => {
     const yt = spawn('yt-dlp', args);
